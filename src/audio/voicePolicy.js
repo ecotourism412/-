@@ -36,13 +36,13 @@ function shouldEnableVoice(speaker, priority) {
 
 function voicePriorityFor(speaker, priority) {
   if (speaker === "pigKing") {
-    return 4;
+    return 3;
   }
   if (speaker === "cabbage" || speaker === "cabbageSpirit") {
     return 2;
   }
   if (speaker === "pig") {
-    return 3;
+    return 1;
   }
   return priority;
 }

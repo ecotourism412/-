@@ -140,7 +140,12 @@ async function requestChat(runtime, message) {
 }
 
 function enqueueChatReaction(runtime, reaction) {
-  const bark = normalizeBark(reaction);
+  const bark = normalizeBark(reaction, {
+    eventType: "PLAYER_CHAT",
+    sourceType: "player_chat",
+    speakerType: reaction?.speaker,
+    voiceSlot: "player_chat",
+  });
   if (!bark) {
     return;
   }

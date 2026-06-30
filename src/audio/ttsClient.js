@@ -3,21 +3,69 @@ export const USE_REMOTE_TTS = true;
 const TTS_ENDPOINT = "/api/tts";
 const TTS_TIMEOUT_MS = 9000;
 const SPEAKER_COOLDOWNS = {
-  cabbage: 6.5,
-  cabbageSpirit: 6.5,
-  pig: 6.5,
-  pigKing: 1.5,
+  cabbage: 4.2,
+  cabbageSpirit: 4.2,
+  pig: 10,
+  pigKing: 2.2,
+};
+const ATTEMPT_COOLDOWNS = {
+  cabbage: 1.4,
+  pig: 2.6,
+  pigKing: 1.2,
+};
+const VOICE_BUDGETS = {
+  normal: {
+    cabbage: 5,
+    pig: 1,
+    pigKing: 0,
+  },
+  boss: {
+    cabbage: 5,
+    pig: 1,
+    pigKing: 3,
+  },
+};
+const VOICE_RANKS = {
+  cabbage: 2,
+  pig: 2,
+  pigKing: 3,
+};
+const BOSS_PRIMARY_SLOTS = new Set(["boss_intro", "boss_half_hp", "boss_killed"]);
+const BOSS_FILLER_SLOT = "boss_low_hp";
+const BOSS_QUIET_SLOTS = new Set(["boss_charge_prepare", "boss_stomp_prepare"]);
+const SOURCE_TO_SLOT = {
+  boss_intro: "boss_intro",
+  boss_half_hp: "boss_half_hp",
+  boss_low_hp: "boss_low_hp",
+  boss_killed: "boss_killed",
+  boss_charge_prepare: "boss_charge_prepare",
+  boss_stomp_prepare: "boss_stomp_prepare",
+  player_chat: "player_chat",
+};
+const EVENT_TO_SLOT = {
+  BOSS_ENTER: "boss_intro",
+  BOSS_HALF_HP: "boss_half_hp",
+  BOSS_LOW_HP: "boss_low_hp",
+  BOSS_DEATH: "boss_killed",
+  BOSS_CHARGE: "boss_charge_prepare",
+  PLAYER_CHAT: "player_chat",
 };
 
 export function createTTSState() {
   return {
     inFlight: false,
+    inFlightSpeaker: "",
+    inFlightSlot: "",
+    inFlightRank: 0,
     currentAudio: null,
     currentObjectUrl: "",
-    currentPriority: 0,
-    inFlightPriority: 0,
+    currentSpeaker: "",
+    currentSlot: "",
+    currentRank: 0,
+    lastAttemptAt: {},
     lastSpokenAt: {},
     requestId: 0,
+    voiceMix: createVoiceMix(null, "normal"),
   };
 }
 
@@ -35,41 +83,48 @@ export function maybeSpeakBark(runtime, bark) {
   }
 
   const state = ensureTTSState(runtime);
+  syncVoiceMixState(state, runtime.game);
+
   const now = runtime.game?.time ?? performance.now() / 1000;
-  const speaker = normalizeSpeaker(bark.speaker);
-  const cooldown = SPEAKER_COOLDOWNS[bark.speaker] ?? SPEAKER_COOLDOWNS[speaker] ?? 4;
-  if (!bark.forceVoice && now - (state.lastSpokenAt[speaker] ?? -Infinity) < cooldown) {
+  const context = createVoiceContext(bark, now);
+  markVoiceCandidateSeen(state, context);
+  if (!canUseVoiceBudget(state, context)) {
+    return;
+  }
+  if (!passesVoiceCooldown(state, context)) {
+    return;
+  }
+  if (!canRequestVoice(state, context)) {
     return;
   }
 
-  const voicePriority = bark.voicePriority ?? bark.priority ?? 1;
-  if (!canRequestVoice(state, voicePriority, bark.forceVoice)) {
-    return;
-  }
-
-  state.lastSpokenAt[speaker] = now;
+  state.lastAttemptAt[attemptKey(context)] = now;
   state.inFlight = true;
-  state.inFlightPriority = voicePriority;
+  state.inFlightSpeaker = context.speaker;
+  state.inFlightSlot = context.voiceSlot;
+  state.inFlightRank = context.rank;
   const requestId = ++state.requestId;
 
   requestTTS({
-    speaker,
+    speaker: context.speaker,
     text: bark.text,
     tone: bark.tone,
-    priority: voicePriority,
+    priority: context.rank,
     voiceStyle: bark.voiceStyle,
+    eventType: bark.eventType,
+    sourceType: bark.sourceType,
+    voiceSlot: context.voiceSlot,
   })
     .then((response) => {
       if (requestId !== state.requestId || !response?.audio?.base64) {
         return;
       }
-      playAudioResponse(state, response.audio, voicePriority);
+      playAudioResponse(state, response.audio, context);
     })
     .catch(() => {})
     .finally(() => {
       if (requestId === state.requestId) {
-        state.inFlight = false;
-        state.inFlightPriority = 0;
+        clearInFlight(state);
       }
     });
 }
@@ -94,30 +149,79 @@ async function requestTTS(payload) {
   return body;
 }
 
-function canRequestVoice(state, voicePriority, forceVoice) {
-  if (state.inFlight && voicePriority <= state.inFlightPriority) {
+function createVoiceContext(bark, now) {
+  const speaker = normalizeSpeaker(bark.speaker);
+  const voiceSlot = getVoiceSlot(bark, speaker);
+  return {
+    bark,
+    speaker,
+    voiceSlot,
+    rank: VOICE_RANKS[speaker] ?? bark.voicePriority ?? bark.priority ?? 1,
+    forceVoice: Boolean(bark.forceVoice),
+    now,
+  };
+}
+
+function canUseVoiceBudget(state, context) {
+  if (isExtraCabbageChat(context)) {
+    return true;
+  }
+
+  const budget = currentBudget(state)[context.speaker] ?? 0;
+  const spoken = state.voiceMix.spoken[context.speaker] ?? 0;
+  if (spoken >= budget) {
     return false;
   }
 
-  if (!state.currentAudio || state.currentAudio.ended || state.currentAudio.paused) {
+  if (context.speaker !== "pigKing") {
     return true;
   }
-
-  if (voicePriority > state.currentPriority) {
-    return true;
+  if (state.voiceMix.encounterType !== "boss" || BOSS_QUIET_SLOTS.has(context.voiceSlot)) {
+    return false;
   }
-
-  return Boolean(forceVoice && voicePriority >= state.currentPriority);
+  if (BOSS_PRIMARY_SLOTS.has(context.voiceSlot)) {
+    return !state.voiceMix.bossPrimarySpoken[context.voiceSlot];
+  }
+  if (context.voiceSlot === BOSS_FILLER_SLOT) {
+    return hasBossVoiceDeficit(state);
+  }
+  return true;
 }
 
-function playAudioResponse(state, audio, priority) {
-  const bytes = base64ToBytes(audio.base64);
-  if (!bytes.length) {
-    return;
+function passesVoiceCooldown(state, context) {
+  const attemptCooldown = ATTEMPT_COOLDOWNS[context.speaker] ?? 1.5;
+  if (context.now - (state.lastAttemptAt[attemptKey(context)] ?? -Infinity) < attemptCooldown) {
+    return false;
   }
 
-  if (state.currentAudio && !state.currentAudio.ended && !state.currentAudio.paused && priority <= state.currentPriority) {
-    return;
+  if (isExtraCabbageChat(context)) {
+    return true;
+  }
+
+  const cooldown = SPEAKER_COOLDOWNS[context.bark.speaker] ?? SPEAKER_COOLDOWNS[context.speaker] ?? 4;
+  return context.now - (state.lastSpokenAt[context.speaker] ?? -Infinity) >= cooldown;
+}
+
+function canRequestVoice(state, context) {
+  if (state.inFlight) {
+    return canBossKeyPreemptCabbage(context, state.inFlightSpeaker);
+  }
+
+  if (!isAudioActive(state)) {
+    return true;
+  }
+
+  return canBossKeyPreemptCabbage(context, state.currentSpeaker);
+}
+
+function playAudioResponse(state, audio, context) {
+  const bytes = base64ToBytes(audio.base64);
+  if (!bytes.length) {
+    return false;
+  }
+
+  if (isAudioActive(state) && !canBossKeyPreemptCabbage(context, state.currentSpeaker)) {
+    return false;
   }
 
   if (state.currentAudio) {
@@ -134,8 +238,112 @@ function playAudioResponse(state, audio, priority) {
 
   state.currentAudio = element;
   state.currentObjectUrl = objectUrl;
-  state.currentPriority = priority;
-  element.play().catch(() => cleanupObjectUrl(state));
+  state.currentSpeaker = context.speaker;
+  state.currentSlot = context.voiceSlot;
+  state.currentRank = context.rank;
+
+  const playResult = element.play();
+  if (playResult?.then) {
+    playResult.then(() => markVoiceSpoken(state, context)).catch(() => cleanupObjectUrl(state));
+  } else {
+    markVoiceSpoken(state, context);
+  }
+  return true;
+}
+
+function markVoiceCandidateSeen(state, context) {
+  if (context.speaker === "pigKing" && BOSS_PRIMARY_SLOTS.has(context.voiceSlot)) {
+    state.voiceMix.bossPrimarySeen[context.voiceSlot] = true;
+  }
+}
+
+function markVoiceSpoken(state, context) {
+  state.lastSpokenAt[context.speaker] = context.now;
+  if (countsAgainstBudget(context)) {
+    state.voiceMix.spoken[context.speaker] = (state.voiceMix.spoken[context.speaker] ?? 0) + 1;
+  }
+  if (context.speaker === "pigKing" && BOSS_PRIMARY_SLOTS.has(context.voiceSlot)) {
+    state.voiceMix.bossPrimarySpoken[context.voiceSlot] = true;
+  }
+}
+
+function countsAgainstBudget(context) {
+  return !isExtraCabbageChat(context);
+}
+
+function isExtraCabbageChat(context) {
+  return context.speaker === "cabbage" && context.voiceSlot === "player_chat" && context.forceVoice;
+}
+
+function hasBossVoiceDeficit(state) {
+  return countTrue(state.voiceMix.bossPrimarySeen) > countTrue(state.voiceMix.bossPrimarySpoken);
+}
+
+function canBossKeyPreemptCabbage(context, currentSpeaker) {
+  return context.speaker === "pigKing" && isBossKeySlot(context.voiceSlot) && currentSpeaker === "cabbage";
+}
+
+function isBossKeySlot(voiceSlot) {
+  return BOSS_PRIMARY_SLOTS.has(voiceSlot) || voiceSlot === BOSS_FILLER_SLOT;
+}
+
+function getVoiceSlot(bark, speaker) {
+  if (typeof bark.voiceSlot === "string" && bark.voiceSlot) {
+    return bark.voiceSlot;
+  }
+
+  const sourceSlot = SOURCE_TO_SLOT[String(bark.sourceType ?? "").trim().toLowerCase()];
+  if (sourceSlot) {
+    return sourceSlot;
+  }
+
+  const eventSlot = EVENT_TO_SLOT[String(bark.eventType ?? "").trim().toUpperCase()];
+  if (eventSlot) {
+    return eventSlot;
+  }
+
+  return `${speaker}_event`;
+}
+
+function syncVoiceMixState(state, game) {
+  const wave = Number.isFinite(game?.wave) ? game.wave : null;
+  const encounterType = game?.encounterType === "boss" ? "boss" : "normal";
+  if (!state.voiceMix || state.voiceMix.wave !== wave || state.voiceMix.encounterType !== encounterType) {
+    state.voiceMix = createVoiceMix(wave, encounterType);
+  }
+}
+
+function createVoiceMix(wave, encounterType) {
+  return {
+    wave,
+    encounterType,
+    spoken: {
+      cabbage: 0,
+      pig: 0,
+      pigKing: 0,
+    },
+    bossPrimarySeen: {},
+    bossPrimarySpoken: {},
+  };
+}
+
+function currentBudget(state) {
+  return VOICE_BUDGETS[state.voiceMix?.encounterType] ?? VOICE_BUDGETS.normal;
+}
+
+function isAudioActive(state) {
+  return Boolean(state.currentAudio && !state.currentAudio.ended && !state.currentAudio.paused);
+}
+
+function attemptKey(context) {
+  return `${context.speaker}:${context.voiceSlot}`;
+}
+
+function clearInFlight(state) {
+  state.inFlight = false;
+  state.inFlightSpeaker = "";
+  state.inFlightSlot = "";
+  state.inFlightRank = 0;
 }
 
 async function requestWithTimeout(url, options) {
@@ -159,6 +367,10 @@ function normalizeSpeaker(speaker) {
   return speaker === "cabbageSpirit" ? "cabbage" : speaker;
 }
 
+function countTrue(record) {
+  return Object.values(record).filter(Boolean).length;
+}
+
 function base64ToBytes(base64) {
   try {
     const raw = atob(base64);
@@ -178,5 +390,7 @@ function cleanupObjectUrl(state) {
   }
   state.currentObjectUrl = "";
   state.currentAudio = null;
-  state.currentPriority = 0;
+  state.currentSpeaker = "";
+  state.currentSlot = "";
+  state.currentRank = 0;
 }

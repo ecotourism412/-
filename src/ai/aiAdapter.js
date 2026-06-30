@@ -21,7 +21,7 @@ export function createReactionPlan(runtime, event) {
 
     if (!USE_REMOTE_AI) {
       return {
-        reactions: planned.map((item) => normalizeBark(item.fallbackResponse)).filter(Boolean),
+        reactions: planned.map((item) => normalizeBark(item.fallbackResponse, item.decision)).filter(Boolean),
         asyncReactions: [],
       };
     }
@@ -33,7 +33,7 @@ export function createReactionPlan(runtime, event) {
           decision: item.decision,
           snapshot: item.snapshot,
           fallbackResponse: item.fallbackResponse,
-        }).then(normalizeBark)
+        }).then((response) => normalizeBark(response, item.decision))
       ),
     };
   } catch {
@@ -73,7 +73,7 @@ function buildPlannedReaction(runtime, event, decision) {
   return { decision, snapshot, fallbackResponse };
 }
 
-export function normalizeBark(response) {
+export function normalizeBark(response, decision = {}) {
   if (!response?.shouldSpeak || !response.text) {
     return null;
   }
@@ -86,6 +86,9 @@ export function normalizeBark(response) {
     tone: response.tone,
     priority: response.priority,
     ttl: Number.isFinite(response.ttl) ? response.ttl / 1000 : 2.8,
+    eventType: response.eventType ?? decision.eventType ?? "",
+    sourceType: response.sourceType ?? decision.sourceType ?? "",
+    voiceSlot: response.voiceSlot ?? decision.voiceSlot ?? "",
     voiceStyle: response.voiceStyle,
     interrupt: response.interrupt,
     canBeDropped: response.canBeDropped,
