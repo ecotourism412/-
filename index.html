@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>保卫白菜</title>
+    <link rel="stylesheet" href="./style.css?v=ai-chat-v1" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="stage">
+        <canvas id="game" width="400" height="225" aria-label="保卫白菜"></canvas>
+
+        <div class="overlay" id="overlay">
+          <div class="panel">
+            <p class="eyebrow" id="overlayEyebrow">AI CABBAGE DEFENSE</p>
+            <h1 id="overlayTitle">保卫白菜</h1>
+            <p class="lead" id="overlayLead">
+              守住霓虹白菜地，第二波就会撞上想拱菜的超巨型机器猪王。
+            </p>
+
+            <div class="controls">
+              <p><span>移动</span> WASD</p>
+              <p><span>转向</span> 鼠标 / QE / 方向键</p>
+              <p><span>射击</span> 点击左键 / FIRE</p>
+              <p><span>对话</span> 空格打开小白菜</p>
+              <p><span>冲刺</span> Shift</p>
+              <p><span>手机</span> 左摇杆 / 右拖拽 / FIRE</p>
+            </div>
+
+            <button id="startButton" type="button">点击开始</button>
+            <p class="hint" id="overlayHint">桌面和手机都能玩，桌面端点击画面可锁定鼠标。</p>
+          </div>
+        </div>
+
+        <div class="toast" id="toast" aria-live="polite"></div>
+
+        <aside class="cabbage-chat collapsed" id="cabbageChat" aria-label="小白菜聊天">
+          <button class="chat-toggle" id="chatToggle" type="button" aria-expanded="false">
+            小白菜
+          </button>
+          <div class="chat-panel" aria-live="polite">
+            <header class="chat-header">
+              <div>
+                <p class="chat-kicker">AI CABBAGE</p>
+                <h2>小白菜</h2>
+              </div>
+              <button class="chat-close" id="chatClose" type="button" aria-label="收起聊天">
+                收起
+              </button>
+            </header>
+            <div class="chat-messages" id="chatMessages">
+              <p class="chat-empty">我在旁边。想说什么，直接告诉我。</p>
+            </div>
+            <div class="chat-chips" aria-label="快捷对白">
+              <button type="button" data-chat-prompt="我快撑不住了">我快撑不住了</button>
+              <button type="button" data-chat-prompt="现在危险在哪">现在危险在哪</button>
+              <button type="button" data-chat-prompt="帮我嘲讽猪王">嘲讽猪王</button>
+            </div>
+            <form class="chat-form" id="chatForm">
+              <input
+                id="chatInput"
+                type="text"
+                maxlength="80"
+                autocomplete="off"
+                placeholder="对小白菜说一句"
+                aria-label="对小白菜说一句"
+              />
+              <button id="chatSend" type="submit">发送</button>
+            </form>
+          </div>
+        </aside>
+
+        <div class="mobile-controls" id="mobileControls" aria-hidden="true">
+          <div class="look-zone" id="lookZone"></div>
+
+          <div class="move-pad" id="movePad">
+            <div class="move-ring"></div>
+            <div class="move-knob" id="moveKnob"></div>
+            <p class="touch-label">MOVE</p>
+          </div>
+
+          <div class="action-stack">
+            <button class="touch-button boost" id="boostButton" type="button" aria-label="冲刺">
+              BOOST
+            </button>
+            <button class="touch-button fire" id="fireButton" type="button" aria-label="射击">
+              FIRE
+            </button>
+          </div>
+        </div>
+
+        <div class="orientation-lock" id="orientationLock" aria-hidden="true">
+          <div class="orientation-card">
+            <p class="orientation-eyebrow">IPHONE SAFARI</p>
+            <h2>请横屏游玩</h2>
+            <p id="orientationMessage">旋转手机后会自动恢复战斗。</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

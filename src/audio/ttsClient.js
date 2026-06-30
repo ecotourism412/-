@@ -1,0 +1,155 @@
+export const USE_REMOTE_TTS = true;
+
+const TTS_ENDPOINT = "/api/tts";
+const TTS_TIMEOUT_MS = 9000;
+const SPEAKER_COOLDOWNS = {
+  cabbage: 2.4,
+  cabbageSpirit: 2.4,
+  pig: 15,
+  pigKing: 3.2,
+};
+
+export function createTTSState() {
+  return {
+    inFlight: false,
+    currentAudio: null,
+    currentObjectUrl: "",
+    lastSpokenAt: {},
+    requestId: 0,
+  };
+}
+
+export function resetTTSState(runtime) {
+  if (runtime.tts?.currentAudio) {
+    runtime.tts.currentAudio.pause();
+    cleanupObjectUrl(runtime.tts);
+  }
+  runtime.tts = createTTSState();
+}
+
+export function maybeSpeakBark(runtime, bark) {
+  if (!USE_REMOTE_TTS || !bark?.text || !bark.voiceEnabled) {
+    return;
+  }
+
+  const state = ensureTTSState(runtime);
+  const now = runtime.game?.time ?? performance.now() / 1000;
+  const speaker = normalizeSpeaker(bark.speaker);
+  const cooldown = SPEAKER_COOLDOWNS[bark.speaker] ?? SPEAKER_COOLDOWNS[speaker] ?? 4;
+  if (!bark.forceVoice && now - (state.lastSpokenAt[speaker] ?? -Infinity) < cooldown) {
+    return;
+  }
+
+  const voicePriority = bark.voicePriority ?? bark.priority ?? 1;
+  if (state.inFlight && voicePriority < 3 && !bark.forceVoice) {
+    return;
+  }
+
+  state.lastSpokenAt[speaker] = now;
+  state.inFlight = true;
+  const requestId = ++state.requestId;
+
+  requestTTS({
+    speaker,
+    text: bark.text,
+    tone: bark.tone,
+    priority: voicePriority,
+    voiceStyle: bark.voiceStyle,
+  })
+    .then((response) => {
+      if (requestId !== state.requestId || !response?.audio?.base64) {
+        return;
+      }
+      playAudioResponse(state, response.audio, voicePriority);
+    })
+    .catch(() => {})
+    .finally(() => {
+      if (requestId === state.requestId) {
+        state.inFlight = false;
+      }
+    });
+}
+
+async function requestTTS(payload) {
+  const response = await requestWithTimeout(TTS_ENDPOINT, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    return null;
+  }
+
+  const body = await response.json();
+  if (!body?.ok || body.skipped) {
+    return null;
+  }
+  return body;
+}
+
+function playAudioResponse(state, audio, priority) {
+  const bytes = base64ToBytes(audio.base64);
+  if (!bytes.length) {
+    return;
+  }
+
+  if (priority >= 3 && state.currentAudio) {
+    state.currentAudio.pause();
+    cleanupObjectUrl(state);
+  } else if (state.currentAudio && !state.currentAudio.ended && !state.currentAudio.paused) {
+    return;
+  }
+
+  const blob = new Blob([bytes], { type: audio.mimeType || "audio/mpeg" });
+  const objectUrl = URL.createObjectURL(blob);
+  const element = new Audio(objectUrl);
+  element.volume = 0.82;
+  element.onended = () => cleanupObjectUrl(state);
+  element.onerror = () => cleanupObjectUrl(state);
+
+  state.currentAudio = element;
+  state.currentObjectUrl = objectUrl;
+  element.play().catch(() => cleanupObjectUrl(state));
+}
+
+async function requestWithTimeout(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TTS_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function ensureTTSState(runtime) {
+  if (!runtime.tts) {
+    runtime.tts = createTTSState();
+  }
+  return runtime.tts;
+}
+
+function normalizeSpeaker(speaker) {
+  return speaker === "cabbageSpirit" ? "cabbage" : speaker;
+}
+
+function base64ToBytes(base64) {
+  try {
+    const raw = atob(base64);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i += 1) {
+      bytes[i] = raw.charCodeAt(i);
+    }
+    return bytes;
+  } catch {
+    return new Uint8Array();
+  }
+}
+
+function cleanupObjectUrl(state) {
+  if (state.currentObjectUrl) {
+    URL.revokeObjectURL(state.currentObjectUrl);
+  }
+  state.currentObjectUrl = "";
+  state.currentAudio = null;
+}

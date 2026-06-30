@@ -1,0 +1,7 @@
+{
+  "type": "module",
+  "scripts": {
+    "check": "find src server netlify -name '*.js' -print0 | xargs -0 -n1 node --check && node --check main.js",
+    "start": "node server/localServer.js"
+  }
+}
