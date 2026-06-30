@@ -567,7 +567,7 @@ function drawHud(runtime) {
       ? "请横屏游玩  |  旋转手机后自动恢复"
       : input.touch.enabled
         ? "左摇杆移动  |  右侧拖动转向  |  FIRE / BOOST"
-        : "WASD move  |  Mouse/QE turn  |  Click/Space shoot",
+        : "WASD move  |  Mouse/QE turn  |  Click shoot  |  Space chat",
     12,
     HEIGHT - 6
   );

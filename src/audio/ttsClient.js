@@ -5,7 +5,7 @@ const TTS_TIMEOUT_MS = 9000;
 const SPEAKER_COOLDOWNS = {
   cabbage: 2.4,
   cabbageSpirit: 2.4,
-  pig: 15,
+  pig: 6,
   pigKing: 3.2,
 };
 

@@ -1,6 +1,6 @@
 const PIG_BARK_WINDOW_SECONDS = 60;
-const PIG_BARK_LIMIT = 4;
-const PIG_HIT_COOLDOWN_SECONDS = 13;
+const PIG_BARK_LIMIT = 6;
+const PIG_HIT_COOLDOWN_SECONDS = 8;
 const CABBAGE_KILL_COOLDOWN_SECONDS = 2.2;
 const PLAYER_DAMAGED_COOLDOWN_SECONDS = 2.6;
 const COMBO_WINDOW_SECONDS = 3.5;
@@ -53,15 +53,7 @@ export function scheduleAIReaction(runtime, event) {
   }
 
   if (event.type === "pig_killed") {
-    if (now - game.dialogue.ai.lastCabbageKillAt < CABBAGE_KILL_COOLDOWN_SECONDS) {
-      return null;
-    }
-    game.dialogue.ai.lastCabbageKillAt = now;
-    return createDecision("PIG_DEATH", "cabbage", 2, "excited", {
-      sourceType: event.type,
-      intentHint: "celebrate",
-      emotionHint: "excited",
-    });
+    return schedulePigKilled(game, event, now);
   }
 
   if (event.type === "player_damaged") {
@@ -221,6 +213,44 @@ function schedulePigHit(game, event, semanticEvent, now) {
     intentHint: "taunt",
     emotionHint: "hurt",
     canBeDropped: true,
+  });
+}
+
+function schedulePigKilled(game, event, now) {
+  const ai = ensureAIState(game);
+  const canCabbageReact = now - ai.lastCabbageKillAt >= CABBAGE_KILL_COOLDOWN_SECONDS;
+  const canPigReact = allowPigBark(game, now);
+
+  if (canPigReact) {
+    const decision = createDecision("PIG_DEATH", "pig", 1, "sad", {
+      sourceType: event.type,
+      intentHint: "taunt",
+      emotionHint: "sad",
+      canBeDropped: true,
+    });
+
+    if (canCabbageReact) {
+      ai.lastCabbageKillAt = now;
+      decision.followUps = [
+        createDecision("PIG_DEATH", "cabbage", 2, "excited", {
+          sourceType: event.type,
+          intentHint: "celebrate",
+          emotionHint: "excited",
+          delayMs: 650,
+        }),
+      ];
+    }
+    return decision;
+  }
+
+  if (!canCabbageReact) {
+    return null;
+  }
+  ai.lastCabbageKillAt = now;
+  return createDecision("PIG_DEATH", "cabbage", 2, "excited", {
+    sourceType: event.type,
+    intentHint: "celebrate",
+    emotionHint: "excited",
   });
 }
 
