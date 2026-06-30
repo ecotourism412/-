@@ -30,6 +30,10 @@ const VOICE_RANKS = {
   pig: 2,
   pigKing: 3,
 };
+const BOSS_DUEL_PIGKING_SLOT = "boss_duel_pigKing";
+const BOSS_DUEL_CABBAGE_SLOT = "boss_duel_cabbage";
+const BOSS_DUEL_RETRY_DELAY_MS = 800;
+const BOSS_DUEL_RETRY_LIMIT = 5;
 const BOSS_PRIMARY_SLOTS = new Set(["boss_intro", "boss_half_hp", "boss_killed"]);
 const BOSS_FILLER_SLOT = "boss_low_hp";
 const BOSS_QUIET_SLOTS = new Set(["boss_charge_prepare", "boss_stomp_prepare"]);
@@ -95,6 +99,7 @@ export function maybeSpeakBark(runtime, bark) {
     return;
   }
   if (!canRequestVoice(state, context)) {
+    scheduleDeferredBossDuel(runtime, bark, context, state);
     return;
   }
 
@@ -167,6 +172,10 @@ function canUseVoiceBudget(state, context) {
     return true;
   }
 
+  if (isBossDuelSlot(context.voiceSlot)) {
+    return canUseBossDuelSlot(state, context);
+  }
+
   const budget = currentBudget(state)[context.speaker] ?? 0;
   const spoken = state.voiceMix.spoken[context.speaker] ?? 0;
   if (spoken >= budget) {
@@ -194,7 +203,7 @@ function passesVoiceCooldown(state, context) {
     return false;
   }
 
-  if (isExtraCabbageChat(context)) {
+  if (isExtraCabbageChat(context) || isBossDuelSlot(context.voiceSlot)) {
     return true;
   }
 
@@ -255,12 +264,22 @@ function markVoiceCandidateSeen(state, context) {
   if (context.speaker === "pigKing" && BOSS_PRIMARY_SLOTS.has(context.voiceSlot)) {
     state.voiceMix.bossPrimarySeen[context.voiceSlot] = true;
   }
+  if (context.voiceSlot === BOSS_DUEL_PIGKING_SLOT) {
+    state.voiceMix.bossPrimarySeen.boss_intro = true;
+  }
 }
 
 function markVoiceSpoken(state, context) {
   state.lastSpokenAt[context.speaker] = context.now;
   if (countsAgainstBudget(context)) {
     state.voiceMix.spoken[context.speaker] = (state.voiceMix.spoken[context.speaker] ?? 0) + 1;
+  }
+  if (context.voiceSlot === BOSS_DUEL_PIGKING_SLOT) {
+    state.voiceMix.bossDuelSpoken.pigKing = true;
+    state.voiceMix.bossPrimarySpoken.boss_intro = true;
+  }
+  if (context.voiceSlot === BOSS_DUEL_CABBAGE_SLOT) {
+    state.voiceMix.bossDuelSpoken.cabbage = true;
   }
   if (context.speaker === "pigKing" && BOSS_PRIMARY_SLOTS.has(context.voiceSlot)) {
     state.voiceMix.bossPrimarySpoken[context.voiceSlot] = true;
@@ -284,7 +303,48 @@ function canBossKeyPreemptCabbage(context, currentSpeaker) {
 }
 
 function isBossKeySlot(voiceSlot) {
-  return BOSS_PRIMARY_SLOTS.has(voiceSlot) || voiceSlot === BOSS_FILLER_SLOT;
+  return BOSS_PRIMARY_SLOTS.has(voiceSlot) || voiceSlot === BOSS_FILLER_SLOT || voiceSlot === BOSS_DUEL_PIGKING_SLOT;
+}
+
+function isBossDuelSlot(voiceSlot) {
+  return voiceSlot === BOSS_DUEL_PIGKING_SLOT || voiceSlot === BOSS_DUEL_CABBAGE_SLOT;
+}
+
+function canUseBossDuelSlot(state, context) {
+  if (state.voiceMix.encounterType !== "boss") {
+    return false;
+  }
+  if (context.voiceSlot === BOSS_DUEL_PIGKING_SLOT) {
+    return !state.voiceMix.bossDuelSpoken.pigKing;
+  }
+  if (context.voiceSlot === BOSS_DUEL_CABBAGE_SLOT) {
+    return isBossDuelPigKingActive(state) && !state.voiceMix.bossDuelSpoken.cabbage;
+  }
+  return false;
+}
+
+function isBossDuelPigKingActive(state) {
+  return (
+    state.voiceMix.bossDuelSpoken.pigKing ||
+    state.inFlightSlot === BOSS_DUEL_PIGKING_SLOT ||
+    state.currentSlot === BOSS_DUEL_PIGKING_SLOT
+  );
+}
+
+function scheduleDeferredBossDuel(runtime, bark, context, state) {
+  if (context.voiceSlot !== BOSS_DUEL_CABBAGE_SLOT || state.voiceMix.bossDuelSpoken.cabbage) {
+    return;
+  }
+  const retryCount = Number.isFinite(bark.__ttsRetryCount) ? bark.__ttsRetryCount : 0;
+  if (retryCount >= BOSS_DUEL_RETRY_LIMIT) {
+    return;
+  }
+  globalThis.setTimeout(() => {
+    maybeSpeakBark(runtime, {
+      ...bark,
+      __ttsRetryCount: retryCount + 1,
+    });
+  }, BOSS_DUEL_RETRY_DELAY_MS);
 }
 
 function getVoiceSlot(bark, speaker) {
@@ -324,6 +384,10 @@ function createVoiceMix(wave, encounterType) {
     },
     bossPrimarySeen: {},
     bossPrimarySpoken: {},
+    bossDuelSpoken: {
+      pigKing: false,
+      cabbage: false,
+    },
   };
 }
 

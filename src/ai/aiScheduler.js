@@ -239,6 +239,7 @@ function scheduleBossPhase(game, eventType, phaseKey, toneHint, sourceType, extr
     intentHint: toneHint === "sad" ? "taunt" : "taunt",
     emotionHint: toneHint === "sad" ? "sad" : "angry",
     interrupt: true,
+    voiceSlot: phaseKey === "intro" ? "boss_duel_pigKing" : "",
     ...extras,
   });
   decision.followUps = [
@@ -248,6 +249,7 @@ function scheduleBossPhase(game, eventType, phaseKey, toneHint, sourceType, extr
       emotionHint: emotionForCabbageBossPhase(phaseKey),
       delayMs: followUpDelayForBossPhase(phaseKey),
       interrupt: true,
+      voiceSlot: phaseKey === "intro" ? "boss_duel_cabbage" : "",
     }),
   ];
   return decision;
@@ -291,6 +293,7 @@ function createDecision(eventType, speakerType, priority, toneHint, options = {}
     interrupt: Boolean(options.interrupt),
     canBeDropped: Boolean(options.canBeDropped),
     delayMs: options.delayMs ?? 0,
+    voiceSlot: options.voiceSlot ?? "",
   };
 }
 
