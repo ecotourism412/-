@@ -3,10 +3,10 @@ export const USE_REMOTE_TTS = true;
 const TTS_ENDPOINT = "/api/tts";
 const TTS_TIMEOUT_MS = 9000;
 const SPEAKER_COOLDOWNS = {
-  cabbage: 2.4,
-  cabbageSpirit: 2.4,
-  pig: 6,
-  pigKing: 3.2,
+  cabbage: 6.5,
+  cabbageSpirit: 6.5,
+  pig: 6.5,
+  pigKing: 1.5,
 };
 
 export function createTTSState() {
@@ -14,6 +14,8 @@ export function createTTSState() {
     inFlight: false,
     currentAudio: null,
     currentObjectUrl: "",
+    currentPriority: 0,
+    inFlightPriority: 0,
     lastSpokenAt: {},
     requestId: 0,
   };
@@ -41,12 +43,13 @@ export function maybeSpeakBark(runtime, bark) {
   }
 
   const voicePriority = bark.voicePriority ?? bark.priority ?? 1;
-  if (state.inFlight && voicePriority < 3 && !bark.forceVoice) {
+  if (!canRequestVoice(state, voicePriority, bark.forceVoice)) {
     return;
   }
 
   state.lastSpokenAt[speaker] = now;
   state.inFlight = true;
+  state.inFlightPriority = voicePriority;
   const requestId = ++state.requestId;
 
   requestTTS({
@@ -66,6 +69,7 @@ export function maybeSpeakBark(runtime, bark) {
     .finally(() => {
       if (requestId === state.requestId) {
         state.inFlight = false;
+        state.inFlightPriority = 0;
       }
     });
 }
@@ -82,9 +86,28 @@ async function requestTTS(payload) {
 
   const body = await response.json();
   if (!body?.ok || body.skipped) {
+    if (body?.reason) {
+      console.warn(`[tts] skipped ${payload.speaker}: ${body.reason}`);
+    }
     return null;
   }
   return body;
+}
+
+function canRequestVoice(state, voicePriority, forceVoice) {
+  if (state.inFlight && voicePriority <= state.inFlightPriority) {
+    return false;
+  }
+
+  if (!state.currentAudio || state.currentAudio.ended || state.currentAudio.paused) {
+    return true;
+  }
+
+  if (voicePriority > state.currentPriority) {
+    return true;
+  }
+
+  return Boolean(forceVoice && voicePriority >= state.currentPriority);
 }
 
 function playAudioResponse(state, audio, priority) {
@@ -93,11 +116,13 @@ function playAudioResponse(state, audio, priority) {
     return;
   }
 
-  if (priority >= 3 && state.currentAudio) {
+  if (state.currentAudio && !state.currentAudio.ended && !state.currentAudio.paused && priority <= state.currentPriority) {
+    return;
+  }
+
+  if (state.currentAudio) {
     state.currentAudio.pause();
     cleanupObjectUrl(state);
-  } else if (state.currentAudio && !state.currentAudio.ended && !state.currentAudio.paused) {
-    return;
   }
 
   const blob = new Blob([bytes], { type: audio.mimeType || "audio/mpeg" });
@@ -109,6 +134,7 @@ function playAudioResponse(state, audio, priority) {
 
   state.currentAudio = element;
   state.currentObjectUrl = objectUrl;
+  state.currentPriority = priority;
   element.play().catch(() => cleanupObjectUrl(state));
 }
 
@@ -152,4 +178,5 @@ function cleanupObjectUrl(state) {
   }
   state.currentObjectUrl = "";
   state.currentAudio = null;
+  state.currentPriority = 0;
 }

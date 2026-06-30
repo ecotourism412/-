@@ -273,6 +273,9 @@ function pickVoiceId(env, speaker) {
   if (speaker === "pigKing" && !isPlaceholder(env.DOUBAO_TTS_VOICE_PIG)) {
     return env.DOUBAO_TTS_VOICE_PIG;
   }
+  if ((speaker === "pig" || speaker === "pigKing") && !isPlaceholder(env.DOUBAO_TTS_VOICE_CABBAGE)) {
+    return env.DOUBAO_TTS_VOICE_CABBAGE;
+  }
   return "";
 }
 
